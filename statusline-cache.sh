@@ -12,8 +12,31 @@ if [ -n "$session_id" ]; then
   jsonl=$(find ~/.claude/projects -maxdepth 3 -name "${session_id}.jsonl" -type f 2>/dev/null | head -1)
   if [ -n "$jsonl" ] && [ -f "$jsonl" ]; then
     cache_data=$(jq -s '
-      [.[] | select(.message.usage) | .message.usage] as $usages
+      [.[] | select(.message.usage and .timestamp)] as $all
+      | [$all[] | .message.usage] as $usages
+      | [$all[]
+          | .message.usage as $u
+          | ($u.cache_read_input_tokens // 0) as $cr
+          | ($u.cache_creation_input_tokens // 0) as $cw
+          | ($u.input_tokens // 0) as $it
+          | ($cr + $cw + $it) as $tot
+          | select($tot > 0 and ($cr * 100 / $tot) >= 50)
+          | $cw] as $healthy
+      | (if ($healthy | length) > 0 then $healthy | min else 0 end) as $base
       | ($usages | last) as $last
+      | (reduce ($all | sort_by(.timestamp))[] as $m (
+          {w: 0, p: null};
+          $m.message.usage as $u
+          | ($u.cache_read_input_tokens // 0) as $cr
+          | ($u.cache_creation_input_tokens // 0) as $cw
+          | ($u.input_tokens // 0) as $it
+          | ($cr + $cw + $it) as $tot
+          | ($m.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) as $ts
+          | (if .p == null then 999999 else ($ts - .p) end) as $gap
+          | if $tot > 0 and ($cr * 100 / $tot) < 50 and $gap < 3600 and $cw > $base
+            then {w: (.w + (($cw - $base) * 115 / 100 | floor)), p: $ts}
+            else . + {p: $ts} end
+        ) | .w) as $session_waste
       | if $last == null then null else
           ($last.cache_read_input_tokens // 0) as $cr
           | ($last.cache_creation_input_tokens // 0) as $cw
@@ -26,13 +49,15 @@ if [ -n "$session_id" ]; then
                 | (.cache_creation_input_tokens // 0) as $w
                 | (.input_tokens // 0) as $i
                 | ($r + $w + $i) as $t
-                | select($t > 0 and ($r * 100 / $t) < 50)] | length)
+                | select($t > 0 and ($r * 100 / $t) < 50)] | length),
+              session_waste: $session_waste
             }
         end
     ' "$jsonl" 2>/dev/null)
     if [ -n "$cache_data" ] && [ "$cache_data" != "null" ]; then
       hit=$(echo "$cache_data" | jq -r '.hit')
       flushes=$(echo "$cache_data" | jq -r '.flushes')
+      session_waste=$(echo "$cache_data" | jq -r '.session_waste // 0')
       if [ "$hit" = "-1" ]; then
         cache_str=" | cache --"
       elif [ "$hit" -lt 50 ]; then
@@ -42,6 +67,16 @@ if [ -n "$session_id" ]; then
       fi
       if [ -n "$flushes" ] && [ "$flushes" -gt 0 ]; then
         cache_str="${cache_str} (${flushes}f)"
+      fi
+      if [ -n "$session_waste" ] && [ "$session_waste" -gt 0 ]; then
+        if [ "$session_waste" -ge 1000000 ]; then
+          sw_fmt=$(awk "BEGIN { printf \"%.1fM\", $session_waste/1000000 }")
+        elif [ "$session_waste" -ge 1000 ]; then
+          sw_fmt=$(awk "BEGIN { printf \"%.0fk\", $session_waste/1000 }")
+        else
+          sw_fmt="$session_waste"
+        fi
+        cache_str="${cache_str} | chat: ${sw_fmt}"
       fi
     fi
   fi
@@ -125,5 +160,5 @@ elif [ "$waste_total" -ge 1000 ]; then
 else
   waste_fmt="$waste_total"
 fi
-[ "$waste_total" -gt 0 ] && waste_str=" | wasted: ${waste_fmt}"
+[ "$waste_total" -gt 0 ] && waste_str=" | lifetime: ${waste_fmt}"
 # cc-cache-monitor: END

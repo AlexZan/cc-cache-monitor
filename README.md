@@ -6,13 +6,15 @@ Claude Code's prompt cache has been silently breaking since at least March 2026,
 
 ## What it shows
 
-After install, your Claude Code statusline gets two new fields at the end:
+After install, your Claude Code statusline gets new fields at the end:
 
 ```
-Opus4.7 | high | $0.42 | 23% ██░░░░░░ | 127k | 5h 96% | 7d 67% | cache 98% (3f) | wasted: 47.3M
+Opus4.7 | high | $0.42 | 23% ██░░░░░░ | 127k | 5h 96% | 7d 67% | cache 98% (3f) | chat: 1.1M | lifetime: 384M
 ```
 
-### `cache NN%` — per-turn cache health (current session)
+Three scopes, increasing in time horizon:
+
+### `cache NN%` — last-turn cache health
 
 | Display              | Meaning                                                                |
 |----------------------|------------------------------------------------------------------------|
@@ -24,17 +26,27 @@ Opus4.7 | high | $0.42 | 23% ██░░░░░░ | 127k | 5h 96% | 7d 67% |
 
 The flush counter `(Nf)` only appears when N > 0. It's the bug-detection signal — if you see it climb during normal work, your subscription is being silently overcharged.
 
-### `wasted: NN.NM` — lifetime input-token-equivalents lost to the bug
+### `chat: NN.NM` — current conversation's bug-induced waste
 
-Cumulative across **every** session in `~/.claude/projects/`. Counts a flush as bug-induced when:
-- Per-turn hit rate < 50%, **AND**
-- Time since previous turn < 60 min (cache should still have been alive per the paid 1h TTL)
+Tokens lost to bug-induced flushes in **this conversation only**. Updates each turn. Hidden when zero.
 
-Per-flush waste is estimated as `(cache_creation_observed - baseline) × 1.15`, where the 1.15 multiplier is the price gap between cache_write (1.25×) and cache_read (0.1×). Waste is in **input-token-equivalents** — the unit Anthropic bills against your rate limit.
+### `lifetime: NN.NM` — every session ever
 
-This number only grows. When it gets big, that's a quantified cost of Anthropic shipping below their stated 1h TTL spec.
+Cumulative across **every** JSONL in `~/.claude/projects/`. Both fields use the same per-flush formula; they differ only in scope.
 
-Performance: cached per-file by mtime. First run walks all your JSONLs (~50ms for ~50 files); subsequent refreshes only re-parse files whose mtime changed.
+### How "bug-induced" is determined
+
+A flush counts as bug-induced (and contributes to `chat`/`lifetime`) when **both**:
+- Per-turn hit rate < 50%, AND
+- Time since previous turn < 60 min — cache should still have been alive per the paid 1h TTL
+
+Genuine idle past 1h (you went to lunch for 90 min) is excluded. Bug-A/Bug-B flushes (mid-session cache invalidation) are included. TTL-regression flushes (Anthropic silently dropped TTL from 1h to 5m per #46829) are also included — because you paid for the 1h TTL and didn't get it.
+
+Per-flush waste: `(cache_creation_observed - baseline) × 1.15`, where 1.15 is the price gap between cache_write rate (1.25×) and cache_read rate (0.1×). Waste is in **input-token-equivalents** — the unit Anthropic bills against your rate limit.
+
+The `lifetime:` number only grows. When it's big, that's a quantified cost of Anthropic shipping below their stated 1h TTL spec.
+
+Performance: lifetime waste is cached per-file at `~/.claude/cc-cache-monitor/waste-cache.json`, keyed by JSONL mtime. First run walks all your JSONLs (~50-100ms for ~500 files); subsequent refreshes only re-parse files whose mtime changed.
 
 ## Why this exists
 
