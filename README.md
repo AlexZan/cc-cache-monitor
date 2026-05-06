@@ -6,13 +6,13 @@ Claude Code's prompt cache has been silently breaking since at least March 2026,
 
 ## What it shows
 
-After install, your Claude Code statusline gets a new field at the end:
+After install, your Claude Code statusline gets two new fields at the end:
 
 ```
-Opus4.7 | high | $0.42 | 23% ██░░░░░░ | 127k | 5h 96% | 7d 67% | cache 98% (3f)
+Opus4.7 | high | $0.42 | 23% ██░░░░░░ | 127k | 5h 96% | 7d 67% | cache 98% (3f) | wasted: 47.3M
 ```
 
-Three states:
+### `cache NN%` — per-turn cache health (current session)
 
 | Display              | Meaning                                                                |
 |----------------------|------------------------------------------------------------------------|
@@ -23,6 +23,18 @@ Three states:
 | `cache --`           | First turn, no usage data yet.                                         |
 
 The flush counter `(Nf)` only appears when N > 0. It's the bug-detection signal — if you see it climb during normal work, your subscription is being silently overcharged.
+
+### `wasted: NN.NM` — lifetime input-token-equivalents lost to the bug
+
+Cumulative across **every** session in `~/.claude/projects/`. Counts a flush as bug-induced when:
+- Per-turn hit rate < 50%, **AND**
+- Time since previous turn < 60 min (cache should still have been alive per the paid 1h TTL)
+
+Per-flush waste is estimated as `(cache_creation_observed - baseline) × 1.15`, where the 1.15 multiplier is the price gap between cache_write (1.25×) and cache_read (0.1×). Waste is in **input-token-equivalents** — the unit Anthropic bills against your rate limit.
+
+This number only grows. When it gets big, that's a quantified cost of Anthropic shipping below their stated 1h TTL spec.
+
+Performance: cached per-file by mtime. First run walks all your JSONLs (~50ms for ~50 files); subsequent refreshes only re-parse files whose mtime changed.
 
 ## Why this exists
 

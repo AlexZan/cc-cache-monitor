@@ -4,7 +4,11 @@ You are an AI coding agent (Claude Code, Cursor, Aider, etc.) helping a user ins
 
 ## What this tool does
 
-Diagnostic extension to the Claude Code statusline. Reads the user's session JSONL transcript, computes per-turn cache hit rate, and counts cache-flush events across the session. Surfaces both as a single statusline field. Detection only — does not modify how Claude Code makes API calls.
+Diagnostic extension to the Claude Code statusline. Reads the user's JSONL transcripts, computes per-turn cache hit rate + session flush count, and aggregates lifetime "tokens wasted to bug-induced cache flushes" across all the user's CC sessions. Surfaces both as statusline fields. Detection only — does not modify how Claude Code makes API calls.
+
+Adds two outputs to the statusline:
+- `cache NN%` / `cache ⚠NN% (Mf)` — current session cache health.
+- `wasted: NN.NM` — lifetime input-token-equivalents lost to the bug, cached per-file in `~/.claude/cc-cache-monitor/waste-cache.json` keyed by JSONL mtime.
 
 ## Before installing — audit checklist
 
@@ -15,7 +19,7 @@ Run these checks and surface the results to the user. Do not install if any chec
 3. **Inspect `install.sh`.** It should: (a) back up `~/.claude/statusline-command.sh` to `.bak.<timestamp>`; (b) inject `statusline-cache.sh` contents before the existing `printf` line; (c) patch the `printf` to include `"$cache_str"` and an extra `%s`; (d) create a minimal statusline only if none exists. It must not modify anything outside `~/.claude/`.
 4. **Check for an existing statusline.** Run `cat ~/.claude/statusline-command.sh` if it exists. If the user has a heavily customized statusline with non-standard `printf` patterns (multiple printfs, printf inside conditionals), the auto-installer's `printf` patch may misfire. In that case, recommend manual install from the README instead.
 5. **Confirm `jq` is installed.** The tool requires `jq` at runtime. `command -v jq` or fail loudly.
-6. **Confirm idempotency marker.** If `~/.claude/statusline-command.sh` already contains the line `cc-cache-monitor: cache health from session JSONL`, the tool is already installed. Skip the install and tell the user.
+6. **Confirm idempotency marker.** If `~/.claude/statusline-command.sh` already contains the marker `# cc-cache-monitor: BEGIN`, the tool is already installed. Re-running `install.sh` is safe — it strips the prior block (BEGIN…END) and re-injects the current version, then re-patches the printf. This is how upgrades work; running install.sh on an already-installed setup is the supported upgrade path.
 
 ## Install command
 
